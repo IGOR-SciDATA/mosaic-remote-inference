@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title">
+  <title id="title">Mosaic symbol</title>
+  <rect x="8" y="8" width="36" height="36" rx="3" fill="#292929"/>
+  <rect x="52" y="8" width="36" height="36" rx="3" fill="#E3262E"/>
+  <rect x="8" y="52" width="36" height="36" rx="3" fill="#E6E6E6"/>
+  <path d="M52 52h36v36H52z" fill="#292929"/>
+  <path d="M52 52h18v18H52z" fill="#E3262E"/>
+</svg>
