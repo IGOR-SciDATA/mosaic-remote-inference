@@ -105,3 +105,12 @@ A aplicação não depende de Colab nem de Cloudflare. Em um ambiente de noteboo
 - Não persiste conversas, memória, tarefas ou resultados.
 - A autenticação Bearer é um controle de protótipo, não identidade de produção.
 - Testes de contrato não comprovam por si só a integração E2E com GPU/Ollama reais.
+
+
+## Colab notebook experiment (optional)
+
+Use a fresh notebook and keep credentials out of committed notebooks. Install Ollama and this service only in an environment whose terms and configured networking permit the intended use. The notebook runtime is ephemeral, and its outbound URL may disappear at any time.
+
+Cloudflare Tunnel setup is deployment-specific and should be documented separately from the model-serving code. Use an authenticated HTTPS endpoint, a high-entropy bearer secret, and a tunnel configuration appropriate for SSE streaming. Do not publish the Ollama port directly. Avoid Cloudflare Quick Tunnels for this stream because their temporary configuration is not intended as a reliable SSE serving endpoint.
+
+When configuring the local Mosaic backend, enter the remote HTTPS service URL in **Remote Inference Settings** and set `MOSAIC_REMOTE_INFERENCE_TOKEN` in the backend environment. The secret must never be added to React variables (such as `VITE_*`), request JSON, screenshots, or repository files.
