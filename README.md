@@ -4,108 +4,71 @@
   <h1>MOSAIC · REMOTE INFERENCE</h1>
   <p><strong>Modelos maiores. Um Core que continua sendo seu.</strong></p>
   <p>Serviço HTTP independente para inferência em modelos Ollama hospedados em outra máquina.</p>
-  <p>
-    <img alt="Python" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" />
-    <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white" />
-    <img alt="Ollama" src="https://img.shields.io/badge/Runtime-Ollama-black" />
-    <img alt="Status" src="https://img.shields.io/badge/status-RR1%20foundation-E3262E" />
-  </p>
 </div>
 
 ---
 
 ## Objetivo
 
-O **Mosaic Remote Inference (RR1)** permite que o Mosaic, executado no computador do usuário, solicite respostas a um modelo hospedado em outra máquina — por exemplo, um computador com mais memória e um modelo maior disponível no Ollama.
-
-O serviço é separado do **Mosaic Core**. Ele recebe uma solicitação autenticada, valida seus limites, encaminha a inferência ao Ollama configurado e devolve o texto gerado. O Core continua responsável por conversas, memória, projetos, contexto e estado.
-
-> **Princípio:** o modelo pode mudar de máquina; a continuidade do Mosaic permanece sob controle do Core.
+O **Mosaic Remote Inference** recebe pedidos de inferência autenticados, encaminha-os ao Ollama e retorna respostas completas ou fragmentos de texto por Server-Sent Events (SSE). O Mosaic Core local continua dono das conversas, memória, projetos, contexto, tarefas, ferramentas e estado.
 
 ## Arquitetura
 
 ```mermaid
 flowchart LR
-    U["Computador do usuário"] --> C["Mosaic Core"]
-    C -->|"HTTP + Bearer token"| R["Mosaic Remote Inference"]
-    R -->|"Ollama API /api/chat"| O["Ollama + modelo"]
-    O --> R
-    R --> C
+    UI[React local] <--> CORE[Mosaic Core local]
+    CORE -->|HTTPS + Bearer| REMOTE[Mosaic Remote Inference]
+    REMOTE -->|HTTP local| OLLAMA[Ollama + modelo]
+    OLLAMA -->|tokens| REMOTE
+    REMOTE -->|SSE text_delta| CORE
+    CORE -->|SSE para UI| UI
 ```
 
-A integração deve acontecer pelo Core, não diretamente pela interface web, para que o segredo de autenticação não seja exposto no frontend.
+O token só existe no backend local e no serviço remoto; nunca é enviado ao React.
 
-## Tecnologias
+## Contrato HTTP
 
-- **Python 3.11+** — runtime.
-- **FastAPI** — API HTTP.
-- **Pydantic v2** — validação de contratos.
-- **httpx** — comunicação assíncrona com Ollama.
-- **Uvicorn** — servidor ASGI.
-- **pytest / pytest-asyncio** — testes.
-- **Ollama** — runtime do modelo na máquina de inferência.
+| Método | Endpoint | Auth | Retorno |
+|---|---|---|---|
+| GET | `/health/live` | Não | Processo ativo |
+| GET | `/health/ready` | Não | Runtime/modelo disponível |
+| GET | `/v1/capabilities` | Não | Capacidades, incluindo `streaming` |
+| POST | `/v1/inference` | Bearer | JSON com `model` e `output_text` completos |
+| POST | `/v1/inference/stream` | Bearer | SSE com eventos `text_delta` e `data: [DONE]` |
 
-## O que existe hoje — RR1
+Formato SSE de fragmentos:
 
-| Componente | Situação |
-|---|---|
-| Aplicação FastAPI independente | Implementado |
-| Autenticação Bearer token | Implementado |
-| Health checks de processo e prontidão | Implementado |
-| Endpoint de capacidades | Implementado |
-| Inferência de texto sem streaming | Implementado |
-| Adaptador Ollama via `/api/chat` | Implementado |
-| Limites de entrada e parâmetros | Implementado |
-| Erros públicos normalizados | Implementado |
-| Testes de contrato, autenticação, configuração e health | Incluídos |
-| Integração de ponta a ponta com Mosaic Core | Pendente |
-| Streaming, tools, múltiplos modelos e persistência | Fora do RR1 |
+```text
+data: {"type":"text_delta","text":"Olá"}
 
-O serviço usa **um modelo configurado no servidor**. O cliente não pode escolher URLs de runtime nem alterar o modelo por requisição.
+data: {"type":"text_delta","text":" mundo"}
 
-## Requisitos
+data: [DONE]
+```
 
-- Python **3.11+**
-- Git
-- Ollama instalado e acessível pela máquina do serviço
-- Um modelo baixado no Ollama
-- Um token secreto forte para autenticar o Core
+Falha depois de iniciar o streaming é enviada como evento SSE `error`. O cliente não deve considerar a resposta completa se receber esse evento ou se a conexão encerrar antes do marcador terminal.
 
-## Instalação
+## Instalação local
 
-### 1. Clone o repositório
+Python 3.11+, Git e Ollama.
 
 ```bash
 git clone https://github.com/IGOR-SciDATA/mosaic-remote-inference.git
 cd mosaic-remote-inference
+python -m venv .venv
 ```
 
-### 2. Crie o ambiente Python
-
-**Windows (PowerShell):**
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-```
-
-**Linux / macOS:**
+Ative o ambiente virtual, depois:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+ollama pull qwen2.5:3b
 ```
 
-### 3. Configure as variáveis
-
-Edite `.env` e defina:
+Configure as variáveis de ambiente (não coloque o token em Git ou no frontend):
 
 ```dotenv
-MOSAIC_REMOTE_INFERENCE_TOKEN=seu-segredo-longo-e-aleatorio
+MOSAIC_REMOTE_INFERENCE_TOKEN=use-um-segredo-aleatorio-longo
 MOSAIC_RUNTIME_BASE_URL=http://127.0.0.1:11434
 MOSAIC_RUNTIME_MODEL=qwen2.5:3b
 MOSAIC_INFERENCE_TIMEOUT_SECONDS=90
@@ -113,63 +76,10 @@ MOSAIC_MAX_INPUT_CHARS=24000
 MOSAIC_MAX_MESSAGES=40
 ```
 
-Gere um segredo com:
-
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-A aplicação lê variáveis de ambiente, mas **não carrega o arquivo `.env` automaticamente nesta versão**. Exporte/carregue os valores no ambiente antes de iniciar o servidor. Nunca faça commit do token real.
-
-### 4. Prepare o Ollama
-
-Na máquina que executará o modelo:
-
-```bash
-ollama pull qwen2.5:3b
-ollama list
-```
-
-O nome em `MOSAIC_RUNTIME_MODEL` deve corresponder ao nome exibido por `ollama list`. Para usar um modelo maior, baixe-o no Ollama e ajuste a variável.
-
-Por padrão, Ollama deve estar acessível em `http://127.0.0.1:11434` na mesma máquina. Se estiver em outra máquina, configure o endereço interno correto e proteja a comunicação na rede.
-
-### 5. Inicie o serviço
-
-Com as variáveis já carregadas no ambiente:
+O serviço não carrega automaticamente o arquivo `.env` nesta versão; exporte as variáveis para o processo.
 
 ```bash
 uvicorn app.main:app --host 127.0.0.1 --port 8090
-```
-
-Use `--host 0.0.0.0` apenas quando o acesso pela rede estiver planejado e protegido. Não exponha o endpoint diretamente à internet pública sem TLS e controles de rede.
-
-## Endpoints
-
-| Método | Endpoint | Autenticação | Finalidade |
-|---|---|---|---|
-| `GET` | `/health/live` | Não | Confirma que o processo está ativo |
-| `GET` | `/health/ready` | Não | Verifica runtime e modelo configurado |
-| `GET` | `/v1/capabilities` | Não | Informa versão do protocolo e capacidades |
-| `POST` | `/v1/inference` | Bearer token | Solicita geração de texto |
-
-Exemplo:
-
-```bash
-curl http://127.0.0.1:8090/v1/inference \
-  -H "Authorization: Bearer SEU_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "Olá! Explique brevemente o Mosaic."}],
-    "temperature": 0.2,
-    "max_tokens": 300
-  }'
-```
-
-Resposta esperada:
-
-```json
-{"model":"qwen2.5:3b","output_text":"..."}
 ```
 
 ## Testes
@@ -178,25 +88,20 @@ Resposta esperada:
 python -m pytest -q
 ```
 
-Os testes usam um adaptador controlado e não exigem um Ollama real. Antes de implantar, faça também um teste de fumaça contra o runtime real.
+Os testes de streaming usam um adaptador fake, sem exigir Ollama. Faça também um teste de fumaça com o modelo e a máquina reais antes de usar o serviço.
 
-## Segurança e limites
+## Ligação ao Mosaic local
 
-- Guarde o token em variáveis de ambiente ou em um gerenciador de segredos.
-- Nunca exponha o token no frontend, no Git ou no corpo JSON.
-- Use TLS e controles de rede quando o tráfego cruzar uma rede não confiável.
-- A URL do Ollama é configuração administrativa, nunca entrada fornecida pelo cliente.
-- Erros não devem expor tokens, corpos brutos do runtime ou detalhes internos.
-- O serviço é stateless: não persiste conversas, memórias, projetos ou resultados.
-- O serviço não executa ferramentas nem autoriza ações do Mosaic.
+No ambiente do backend do Mosaic, defina `MOSAIC_REMOTE_INFERENCE_TOKEN` com o mesmo segredo do serviço remoto. Configure o endereço HTTPS do serviço remoto em Configurações de inferência remota. Cadastre um modelo com `provider=remote_inference` e `model_name` igual ao identificador configurado no servidor. O provider deve ser escolhido explicitamente; não há fallback silencioso.
 
-## Próximos passos
+## Execução em Colab e túnel
 
-1. Executar os testes e validar contra Ollama real.
-2. Fechar o contrato de integração com o Mosaic Core.
-3. Integrar a inferência remota sem transferir memória ou estado para este serviço.
-4. Considerar streaming em uma fase futura.
+A aplicação não depende de Colab nem de Cloudflare. Em um ambiente de notebook, use somente a configuração de execução, rede e túnel permitida pelo ambiente e pela conta. Não inclua tokens reais em células versionadas ou logs. O runtime é efêmero: a URL pode deixar de responder quando a sessão terminar. Para uma implantação persistente, use uma máquina de inferência que permita explicitamente servir esse endpoint.
 
----
+## Limites atuais
 
-<div align="center"><sub>MOSAIC · Complexidade no Core. Simplicidade na superfície.</sub></div>
+- Um modelo configurado por processo.
+- Texto apenas; não expõe chamadas de ferramentas remotas.
+- Não persiste conversas, memória, tarefas ou resultados.
+- A autenticação Bearer é um controle de protótipo, não identidade de produção.
+- Testes de contrato não comprovam por si só a integração E2E com GPU/Ollama reais.
