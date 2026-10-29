@@ -1,4 +1,8 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
+
 from app.auth import require_bearer_token
 from app.adapters.ollama import RuntimeUnavailable
 from app.schemas import CapabilitiesResponse, InferenceRequest, InferenceResponse
@@ -9,7 +13,13 @@ router = APIRouter(tags=["inference"])
 @router.get("/v1/capabilities", response_model=CapabilitiesResponse)
 async def capabilities(request: Request):
     settings = request.app.state.settings
-    return CapabilitiesResponse(service=settings.service_name, protocol_version="1", streaming=False, tools=False, configured_model=settings.runtime_model)
+    return CapabilitiesResponse(
+        service=settings.service_name,
+        protocol_version="1",
+        streaming=True,
+        tools=False,
+        configured_model=settings.runtime_model,
+    )
 
 
 @router.post("/v1/inference", response_model=InferenceResponse, dependencies=[Depends(require_bearer_token)])
@@ -24,3 +34,36 @@ async def infer(body: InferenceRequest, request: Request):
     except Exception:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Inference request failed") from None
     return InferenceResponse(model=settings.runtime_model, output_text=output)
+
+
+@router.post("/v1/inference/stream", dependencies=[Depends(require_bearer_token)])
+async def infer_stream(body: InferenceRequest, request: Request):
+    service = request.app.state.inference_service
+    try:
+        # Validate before sending response headers, so bad requests receive an HTTP error.
+        service._validate(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)) from None
+
+    async def events():
+        try:
+            async for chunk in service.stream(body):
+                if await request.is_disconnected():
+                    return
+                payload = json.dumps({"type": "text_delta", "text": chunk}, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+            yield "data: [DONE]\n\n"
+        except RuntimeUnavailable:
+            # HTTP headers may already be sent. A structured SSE error makes the stream
+            # fail closed instead of looking like a successful, complete answer.
+            payload = json.dumps({"type": "error", "error": "Inference runtime unavailable or streaming was interrupted"})
+            yield f"event: error\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )

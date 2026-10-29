@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+
 from app.config import Settings
 from app.main import create_app
 
@@ -13,6 +14,11 @@ class FakeAdapter:
 
     async def generate(self, **kwargs):
         return "Resposta de teste"
+
+    async def stream(self, **kwargs):
+        yield "Resposta "
+        yield "em "
+        yield "streaming"
 
 
 @pytest.fixture
